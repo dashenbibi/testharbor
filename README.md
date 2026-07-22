@@ -65,6 +65,8 @@ cd apps/desktop
 npm run tauri:bundle
 ```
 
+See [Release packaging](./docs/releasing.md) for GitHub-hosted macOS preview builds and signed draft releases.
+
 ## CLI quick start
 
 ```bash
