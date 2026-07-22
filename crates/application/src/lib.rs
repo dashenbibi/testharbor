@@ -9,6 +9,14 @@ mod projects;
 mod result_review;
 mod workspace;
 
+pub(crate) fn deferred_runner_hash() -> String {
+    testharbor_domain::canonical_hash(&["agent-selected-runner"])
+}
+
+pub(crate) fn is_deferred_runner_hash(value: &str) -> bool {
+    value == deferred_runner_hash()
+}
+
 pub use actions::{end_run, get_run_actions, stop_current_activity, ActivityActionResult};
 pub use app_state::{AppState, SharedAppState};
 pub use execution::{
