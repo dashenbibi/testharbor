@@ -65,6 +65,8 @@ cd apps/desktop
 npm run tauri:bundle
 ```
 
+GitHub 托管的 macOS 预览构建和签名 Draft Release 流程见[发布打包](./docs/releasing.md)。
+
 ## CLI 快速开始
 
 ```bash

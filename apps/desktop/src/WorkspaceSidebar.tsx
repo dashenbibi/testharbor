@@ -212,7 +212,7 @@ export function WorkspaceSidebar({
         {!sidebarCollapsed && (
           <>
             <span className="product-mark" aria-hidden="true">
-              ST
+              TH
             </span>
             <span className="sidebar-brand-copy">
               <strong>TestHarbor</strong>

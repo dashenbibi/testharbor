@@ -1,0 +1,107 @@
+name: macOS package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: macOS ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple Silicon
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - name: Intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify native runner architecture
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          test "$(rustc -vV | sed -n 's/^host: //p')" = "$EXPECTED_TARGET"
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix apps/desktop
+
+      - name: Verify release tag and signing configuration
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: apps/desktop
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          node -e 'const fs = require("fs"); const pkg = require("./package.json"); const tauri = JSON.parse(fs.readFileSync("./src-tauri/tauri.conf.json", "utf8")); const tag = process.env.RELEASE_TAG.replace(/^v/, ""); if (pkg.version !== tag || tauri.version !== tag) { console.error(`tag ${tag}, package ${pkg.version}, tauri ${tauri.version}`); process.exit(1); }'
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "Missing release secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Prepare process launcher sidecar
+        run: ./apps/desktop/scripts/prepare-sidecar.sh release prepare
+
+      - name: Build TestHarbor
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_TEAM_ID || '' }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: npm run tauri
+          args: >-
+            --target ${{ matrix.target }}
+            --config src-tauri/tauri.bundle.conf.json
+            ${{ github.event_name == 'workflow_dispatch' && '--no-sign' || '' }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: testharbor-[platform]-[arch]-[bundle]
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('TestHarbor {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generateReleaseNotes: true
+          releaseAssetNamePattern: TestHarbor_[version]_[arch].[ext]
