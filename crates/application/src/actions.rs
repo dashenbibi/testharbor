@@ -99,7 +99,10 @@ pub fn get_run_actions(
                 .ok()
                 .flatten()
                 .and_then(|json| serde_json::from_str::<testharbor_domain::RunSnapshot>(&json).ok())
-                .map(|snapshot| snapshot.required_trust_scope_hash == grant.trust_scope_hash)
+                .map(|snapshot| {
+                    snapshot.required_trust_scope_hash == grant.trust_scope_hash
+                        || crate::is_deferred_runner_hash(&snapshot.required_trust_scope_hash)
+                })
         })
         .unwrap_or(false);
     let accept_ready = crate::reevaluate_accept_pass(state, run_id)

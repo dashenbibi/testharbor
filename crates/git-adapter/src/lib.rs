@@ -5,6 +5,7 @@ mod worktree;
 pub use worktree::*;
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use thiserror::Error;
@@ -92,6 +93,68 @@ pub fn rev_parse(cwd: &Path, rev: &str) -> Result<String> {
 pub fn is_worktree_clean(cwd: &Path) -> Result<bool> {
     let status = git_capture(cwd, &["status", "--porcelain"])?;
     Ok(status.trim().is_empty())
+}
+
+/// List files from the current working tree that may be used as local-only
+/// runtime context. This intentionally includes ignored and untracked files;
+/// callers still apply a narrow allowlist before copying anything.
+pub fn list_runtime_context_paths(cwd: &Path) -> Result<Vec<String>> {
+    let mut paths = BTreeSet::new();
+    for args in [
+        ["ls-files", "--cached", "-z"].as_slice(),
+        ["ls-files", "--others", "--exclude-standard", "-z"].as_slice(),
+        [
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ]
+        .as_slice(),
+    ] {
+        for path in git_capture(cwd, args)?.split('\0') {
+            let path = path.trim();
+            if path.is_empty() {
+                continue;
+            }
+            let relative = Path::new(path);
+            if relative.is_absolute()
+                || relative.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::ParentDir
+                            | std::path::Component::RootDir
+                            | std::path::Component::Prefix(_)
+                    )
+                })
+            {
+                continue;
+            }
+            paths.insert(path.to_string());
+        }
+    }
+    Ok(paths.into_iter().collect())
+}
+
+/// List tracked files changed from HEAD plus ordinary untracked files in the
+/// current worktree. Ignored files are intentionally excluded here because
+/// runtime configuration is handled by the narrower runtime-context mirror.
+pub fn list_working_tree_overlay_paths(cwd: &Path) -> Result<Vec<String>> {
+    let mut paths = BTreeSet::new();
+    for path in git_capture(cwd, &["diff", "--name-only", "HEAD"])?.lines() {
+        let path = path.trim();
+        if !path.is_empty() {
+            paths.insert(path.to_string());
+        }
+    }
+    for path in git_capture(cwd, &["ls-files", "--others", "--exclude-standard", "-z"])?.split('\0')
+    {
+        let path = path.trim();
+        if !path.is_empty() {
+            paths.insert(path.to_string());
+        }
+    }
+    Ok(paths.into_iter().collect())
 }
 
 /// Read a regular UTF-8 blob from an exact Git revision. This never consults
@@ -202,6 +265,30 @@ pub fn ensure_info_exclude(cwd: &Path, pattern: &str) -> Result<()> {
     content.push_str(pattern.trim());
     content.push('\n');
     std::fs::write(exclude, content)?;
+    Ok(())
+}
+
+/// Mark a tracked file as skip-worktree in this isolated worktree only. This
+/// is used for read-only overlays sourced from the user's dirty main tree so
+/// Git does not mistake the overlay for a candidate change.
+pub fn mark_skip_worktree(cwd: &Path, repo_relative_path: &str) -> Result<()> {
+    if git_capture(
+        cwd,
+        &["ls-files", "--error-unmatch", "--", repo_relative_path],
+    )
+    .is_err()
+    {
+        return Ok(());
+    }
+    let output = Command::new("git")
+        .args(["update-index", "--skip-worktree", "--", repo_relative_path])
+        .current_dir(cwd)
+        .output()?;
+    if !output.status.success() {
+        return Err(GitError::Command(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
     Ok(())
 }
 

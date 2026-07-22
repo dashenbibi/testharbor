@@ -293,7 +293,9 @@ pub fn confirm_profile(
     if let Some(snapshot_json) = state.with_store(|store| store.get_run_snapshot_json(run.id))? {
         let snapshot: testharbor_domain::RunSnapshot = serde_json::from_str(&snapshot_json)
             .map_err(|error| ExecutionError::Other(error.to_string()))?;
-        if snapshot.required_trust_scope_hash != grant.trust_scope_hash {
+        if snapshot.required_trust_scope_hash != grant.trust_scope_hash
+            && !crate::is_deferred_runner_hash(&snapshot.required_trust_scope_hash)
+        {
             return Err(ExecutionError::Other(
                 "RunSnapshot 已冻结；Profile/Trust scope 变化必须创建 successor Run".into(),
             ));
@@ -370,6 +372,14 @@ pub fn probe_profile_readiness(
         .worktrees_dir
         .join(format!("probe-{probe_id}"));
     testharbor_git_adapter::add_detached_worktree(
+        Path::new(&project.root_path),
+        &worktree,
+        &run.base_commit,
+    )
+    .map_err(|error| ExecutionError::Other(error.to_string()))?;
+    crate::workspace::sync_runtime_context(Path::new(&project.root_path), &worktree)
+        .map_err(|error| ExecutionError::Other(error.to_string()))?;
+    crate::workspace::sync_working_tree_overlay(
         Path::new(&project.root_path),
         &worktree,
         &run.base_commit,

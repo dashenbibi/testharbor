@@ -214,7 +214,7 @@ impl TestEnvironmentInput {
         }
         masked_inputs.sort_by(|left, right| left.key.cmp(&right.key));
         Ok(TestEnvironmentConfig {
-            context: String::new(),
+            context: self.context.trim().to_string(),
             base_url: self.base_url.trim().to_string(),
             health_url: self
                 .health_url
@@ -480,9 +480,13 @@ fn build_run_snapshot(
             && (req.generation_scope.is_empty()
                 || existing.test_intent.generation_scope == req.generation_scope)
             && profile.as_ref().is_none_or(|profile| {
-                existing.all_command_snapshots_hash == profile.all_command_snapshots_hash()
-                    && existing.required_trust_scope_hash
-                        == testharbor_trust::profile_trust_scope_hash(&project.root_path, profile)
+                let command_hash = profile.all_command_snapshots_hash();
+                let trust_scope_hash =
+                    testharbor_trust::profile_trust_scope_hash(&project.root_path, profile);
+                (existing.all_command_snapshots_hash == command_hash
+                    || crate::is_deferred_runner_hash(&existing.all_command_snapshots_hash))
+                    && (existing.required_trust_scope_hash == trust_scope_hash
+                        || crate::is_deferred_runner_hash(&existing.required_trust_scope_hash))
             })
             && existing.agent_profile_hash == current_agent_hash;
         if !immutable_fields_match || !req.spec_attachments.is_empty() {
@@ -663,15 +667,14 @@ fn build_run_snapshot(
             .unwrap_or_default(),
     )
     .map_err(|error| GenerateError::Other(error.to_string()))?;
-    let deferred_runner_hash = || testharbor_domain::canonical_hash(&["agent-selected-runner"]);
     let all_command_snapshots_hash = profile
         .as_ref()
         .map(|profile| profile.all_command_snapshots_hash())
-        .unwrap_or_else(deferred_runner_hash);
+        .unwrap_or_else(crate::deferred_runner_hash);
     let required_trust_scope_hash = profile
         .as_ref()
         .map(|profile| testharbor_trust::profile_trust_scope_hash(&project.root_path, profile))
-        .unwrap_or_else(deferred_runner_hash);
+        .unwrap_or_else(crate::deferred_runner_hash);
     Ok(RunSnapshot {
         test_intent,
         base_commit: run.base_commit.clone(),
@@ -679,7 +682,7 @@ fn build_run_snapshot(
         test_profile_hash: profile_json
             .as_deref()
             .map(sha256_hex)
-            .unwrap_or_else(deferred_runner_hash),
+            .unwrap_or_else(crate::deferred_runner_hash),
         all_command_snapshots_hash,
         agent_profile_hash,
         path_policy_hash: sha256_hex(&path_policy_json),
@@ -762,11 +765,12 @@ fn service_reachable(base_url: &str) -> bool {
 fn ensure_test_environment(environment: &TestEnvironmentInput, progress_path: &Path) -> Result<()> {
     let base_url = environment.base_url.trim();
     if base_url.is_empty() {
-        append_progress(
-            progress_path,
-            "testharbor.status",
-            "未提供固定服务地址；生成器不会推断或执行服务启动命令",
-        )?;
+        let message = if environment.context.trim().is_empty() {
+            "未提供固定服务地址；生成器不会推断或执行服务启动命令"
+        } else {
+            "已提供环境说明；将由 CLI 判断服务地址、登录方式和启动方式"
+        };
+        append_progress(progress_path, "testharbor.status", message)?;
         return Ok(());
     }
     if service_reachable(base_url) {
@@ -1007,19 +1011,61 @@ fn agent_runner_profile(
     })
 }
 
+/// Keep generation permissive for repositories whose test tooling is not
+/// covered by the built-in project inspector. These are best-effort command
+/// candidates only; the CLI remains the primary source of the repository's
+/// native runner.
+fn fallback_agent_runner(project: &ProjectRecord) -> Option<AgentTestRunner> {
+    let root = Path::new(&project.root_path);
+    let candidates: &[(&str, &str, &[&str])] = &[
+        ("test.php", "php", &["test.php"]),
+        ("test.sh", "sh", &["test.sh"]),
+        ("test.py", "python3", &["test.py"]),
+        ("pyproject.toml", "python3", &["-m", "pytest"]),
+        ("package.json", "npm", &["test"]),
+        ("Makefile", "make", &["test"]),
+        ("Cargo.toml", "cargo", &["test"]),
+        ("go.mod", "go", &["test", "-json", "./..."]),
+        ("pom.xml", "mvn", &["test"]),
+    ];
+    for (marker, executable, args) in candidates {
+        if root.join(marker).is_file() && testharbor_trust::resolve_executable(executable).is_some()
+        {
+            return Some(AgentTestRunner {
+                executable: (*executable).into(),
+                args: args.iter().map(|arg| (*arg).into()).collect(),
+                cwd: Some(".".into()),
+                parser: "exit-code".into(),
+                timeout_ms: Some(3_600_000),
+            });
+        }
+    }
+    let phpunit = root.join("vendor/bin/phpunit");
+    if phpunit.is_file() {
+        return Some(AgentTestRunner {
+            executable: "vendor/bin/phpunit".into(),
+            args: vec![],
+            cwd: Some(".".into()),
+            parser: "exit-code".into(),
+            timeout_ms: Some(3_600_000),
+        });
+    }
+    None
+}
+
 fn bind_agent_runner(
     state: &AppState,
     run: &RunRecord,
     project: &ProjectRecord,
     runner: Option<AgentTestRunner>,
-) -> Result<()> {
-    let Some(runner) = runner else {
-        if state.get_trust_grant(&run.id.to_string()).is_none() {
-            return Err(GenerateError::Other(
-                "Agent 未返回可执行的测试命令；请让 CLI 在生成结果中返回 test_runner".into(),
-            ));
+) -> Result<Option<testharbor_trust::TestProfileDraft>> {
+    if runner.is_none() {
+        if let Some(existing) = state.get_trust_grant(&run.id.to_string()) {
+            return Ok(Some(existing.profile));
         }
-        return Ok(());
+    }
+    let Some(runner) = runner.or_else(|| fallback_agent_runner(project)) else {
+        return Ok(None);
     };
     let profile = agent_runner_profile(project, &runner)?
         .normalize()
@@ -1030,42 +1076,14 @@ fn bind_agent_runner(
                 "Agent 返回的测试命令与已绑定 Profile 不一致；请重新生成 successor Run".into(),
             ));
         }
-        return Ok(());
+        return Ok(Some(existing.profile));
     }
 
-    let mut snapshot = state
-        .with_store(|store| store.get_run_snapshot_json(run.id))?
-        .ok_or_else(|| {
-            GenerateError::Other("RunSnapshot is required before binding test runner".into())
-        })
-        .and_then(|json| {
-            serde_json::from_str::<testharbor_domain::RunSnapshot>(&json)
-                .map_err(|error| GenerateError::Other(error.to_string()))
-        })?;
-    let profile_json =
-        serde_json::to_vec(&profile).map_err(|error| GenerateError::Other(error.to_string()))?;
-    snapshot.test_profile_hash = sha256_hex(&profile_json);
-    snapshot.all_command_snapshots_hash = profile.all_command_snapshots_hash();
-    snapshot.env_policy_hash = sha256_hex(
-        &serde_json::to_vec(&profile.env_policy)
-            .map_err(|error| GenerateError::Other(error.to_string()))?,
-    );
-    snapshot.required_trust_scope_hash =
-        testharbor_trust::profile_trust_scope_hash(&project.root_path, &profile);
-    let snapshot_json =
-        serde_json::to_vec(&snapshot).map_err(|error| GenerateError::Other(error.to_string()))?;
-    let snapshot_hash = sha256_hex(&snapshot_json);
-    state.with_store(|store| {
-        store.set_run_snapshot(
-            run.id,
-            &snapshot.test_intent.hash,
-            &snapshot_hash,
-            &snapshot,
-        )
-    })?;
     crate::confirm_profile(state, &run.id.to_string(), profile)
         .map_err(|error| GenerateError::Other(error.to_string()))?;
-    Ok(())
+    Ok(state
+        .get_trust_grant(&run.id.to_string())
+        .map(|grant| grant.profile))
 }
 
 pub(crate) fn freeze_and_review_worktree(
@@ -1093,25 +1111,26 @@ pub(crate) fn freeze_and_review_worktree(
         base_commit: run.base_commit.clone(),
         run_id: run.id.to_string(),
     };
-    bind_agent_runner(state, run, project, test_runner)?;
-    let profile = state
-        .get_trust_grant(&run.id.to_string())
-        .map(|grant| grant.profile)
-        .ok_or_else(|| {
-            GenerateError::Other(
-                "validation requires a confirmed TrustGrant for the frozen Profile".into(),
-            )
-        })?;
+    let profile = bind_agent_runner(state, run, project, test_runner)?;
+    if profile.is_none() {
+        append_progress(
+            progress_stdout,
+            "testharbor.status",
+            "未能自动确定测试命令，已保留候选进入用例评审；执行前需配置测试命令",
+        )?;
+    }
     let mut validation_stages = Vec::new();
-    if let Some(format) = &profile.format {
-        validation_stages.push(run_validation_command(
-            state,
-            &run.id.to_string(),
-            "format",
-            format,
-            &handle.worktree_path,
-            profile.timeout_ms,
-        )?);
+    if let Some(profile) = profile.as_ref() {
+        if let Some(format) = &profile.format {
+            validation_stages.push(run_validation_command(
+                state,
+                &run.id.to_string(),
+                "format",
+                format,
+                &handle.worktree_path,
+                profile.timeout_ms,
+            )?);
+        }
     }
 
     let snapshot_json = state
@@ -1151,27 +1170,32 @@ pub(crate) fn freeze_and_review_worktree(
         &patterns,
         &format!("testharbor generate r{seq}"),
     )?;
-    for (stage, command) in [
-        ("collect", profile.collect.as_ref()),
-        ("compile", profile.compile.as_ref()),
-    ] {
-        if let Some(command) = command {
-            validation_stages.push(run_validation_command(
-                state,
-                &run.id.to_string(),
-                stage,
-                command,
-                &handle.worktree_path,
-                profile.timeout_ms,
-            )?);
-            if !ws::verify_integrity(&handle, &candidate.candidate_tree)? {
-                return Err(GenerateError::Other(format!(
-                    "{stage} changed the frozen candidate source tree"
-                )));
+    if let Some(profile) = profile.as_ref() {
+        for (stage, command) in [
+            ("collect", profile.collect.as_ref()),
+            ("compile", profile.compile.as_ref()),
+        ] {
+            if let Some(command) = command {
+                validation_stages.push(run_validation_command(
+                    state,
+                    &run.id.to_string(),
+                    stage,
+                    command,
+                    &handle.worktree_path,
+                    profile.timeout_ms,
+                )?);
+                if !ws::verify_integrity(&handle, &candidate.candidate_tree)? {
+                    return Err(GenerateError::Other(format!(
+                        "{stage} changed the frozen candidate source tree"
+                    )));
+                }
             }
         }
     }
-    if profile.command.parser == "go-test-json" {
+    if profile
+        .as_ref()
+        .is_some_and(|profile| profile.command.parser == "go-test-json")
+    {
         let inventory = collect_go_inventory(&handle.worktree_path, &["./..."])
             .map_err(|error| GenerateError::Other(error.to_string()))?;
         if proposed_intended_names.is_empty() {
@@ -1229,11 +1253,15 @@ pub(crate) fn freeze_and_review_worktree(
     )
     .unwrap_or_default();
     let validation_summary = serde_json::json!({
-        "policy": "passed",
+        "policy": if profile.is_some() { "passed" } else { "deferred" },
+        "runner_status": if profile.is_some() { "bound" } else { "unconfigured" },
         "writable": true,
         "stages": validation_stages,
         "candidate_tree": candidate.candidate_tree,
-        "all_command_snapshots_hash": profile.all_command_snapshots_hash(),
+        "all_command_snapshots_hash": profile
+            .as_ref()
+            .map(|profile| profile.all_command_snapshots_hash())
+            .unwrap_or_else(crate::deferred_runner_hash),
         "human_change_request": pending_change.as_ref().map(|request| request.message.clone()),
     })
     .to_string();
@@ -1287,7 +1315,10 @@ pub(crate) fn freeze_and_review_worktree(
     let scope_hash = testharbor_domain::canonical_hash(&[
         test_intent_hash,
         &candidate.candidate_tree,
-        &profile.all_command_snapshots_hash(),
+        &profile
+            .as_ref()
+            .map(|profile| profile.all_command_snapshots_hash())
+            .unwrap_or_else(crate::deferred_runner_hash),
         &validation_hash,
     ]);
     let evidence_refs = vec![
@@ -1484,7 +1515,7 @@ pub(crate) fn freeze_and_review_worktree(
         state
             .get_trust_grant(&run.id.to_string())
             .map(|g| g.trust_scope_hash)
-            .unwrap_or_else(|| "no-trust".into())
+            .unwrap_or_else(crate::deferred_runner_hash)
             .as_str(),
     );
 
@@ -2707,6 +2738,7 @@ index 111..222 100644
         let data = tempfile::tempdir().unwrap();
         let state = AppState::open_at(data.path()).unwrap();
         let input = TestEnvironmentInput {
+            context: "服务运行在项目配置指定的环境，使用 qa 租户".into(),
             username: Some("qa-user".into()),
             password: Some("do-not-store-this".into()),
             variables: HashMap::from([("API_TOKEN".into(), "token-value".into())]),
@@ -2717,6 +2749,7 @@ index 111..222 100644
         assert!(!encoded.contains("do-not-store-this"));
         assert!(!encoded.contains("token-value"));
         assert!(encoded.contains("hmac-sha256:"));
+        assert_eq!(first.context, input.context);
         assert_eq!(first, input.config(&state).unwrap());
     }
 
@@ -2795,6 +2828,117 @@ index 111..222 100644
             .current_dir(dir)
             .status()
             .unwrap();
+    }
+
+    fn init_plain_repo(dir: &std::path::Path) {
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "t@e.com"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "T"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        std::fs::write(dir.join("README.md"), "plain repository\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "i"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+    }
+
+    #[test]
+    fn fallback_runner_uses_a_plain_script_when_cli_does_not_return_one() {
+        let repo = tempfile::tempdir().unwrap();
+        init_plain_repo(repo.path());
+        std::fs::write(repo.path().join("test.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::open_at(data.path()).unwrap();
+        let opened = open_project(&state, repo.path(), true).unwrap();
+        let run = state
+            .with_store(|store| {
+                store.get_run(parse_run_id(&opened.created_run.unwrap().run_id).unwrap())
+            })
+            .unwrap();
+        let project = state
+            .with_store(|store| store.get_project(run.project_id))
+            .unwrap();
+
+        let runner = fallback_agent_runner(&project).expect("sh should be available");
+        assert_eq!(runner.executable, "sh");
+        assert_eq!(runner.args, vec!["test.sh"]);
+        assert_eq!(runner.parser, "exit-code");
+    }
+
+    #[test]
+    fn agent_runner_binds_without_mutating_deferred_snapshot() {
+        let data = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        init_plain_repo(repo.path());
+        let state = AppState::open_at(data.path()).unwrap();
+        let opened = open_project(&state, repo.path(), true).unwrap();
+        let run_id = opened.created_run.unwrap().run_id;
+        let rid = parse_run_id(&run_id).unwrap();
+        let run = state.with_store(|store| store.get_run(rid)).unwrap();
+        let project = state
+            .with_store(|store| store.get_project(run.project_id))
+            .unwrap();
+        let request = GenerateTestsRequest {
+            run_id: run_id.clone(),
+            objective: "run the repository test command".into(),
+            acceptance_criteria: vec!["the command exits successfully".into()],
+            agent_mode: Some("codex".into()),
+            ..Default::default()
+        };
+        let snapshot =
+            build_run_snapshot(&state, &run, &project, &request, AgentMode::Codex).unwrap();
+        assert!(crate::is_deferred_runner_hash(
+            &snapshot.required_trust_scope_hash
+        ));
+        let snapshot_hash = sha256_hex(&serde_json::to_vec(&snapshot).unwrap());
+        state
+            .with_store(|store| {
+                store.set_run_snapshot(
+                    run.id,
+                    &snapshot.test_intent.hash,
+                    &snapshot_hash,
+                    &snapshot,
+                )
+            })
+            .unwrap();
+
+        bind_agent_runner(
+            &state,
+            &run,
+            &project,
+            Some(AgentTestRunner {
+                executable: "/bin/echo".into(),
+                args: vec!["testharbor".into()],
+                cwd: Some(".".into()),
+                parser: "exit-code".into(),
+                timeout_ms: Some(10_000),
+            }),
+        )
+        .unwrap();
+        assert!(state.get_trust_grant(&run_id).is_some());
+        let persisted = state
+            .with_store(|store| store.get_run_snapshot_json(run.id))
+            .unwrap()
+            .unwrap();
+        let persisted: RunSnapshot = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(persisted, snapshot);
     }
 
     #[test]

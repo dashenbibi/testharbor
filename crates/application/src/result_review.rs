@@ -6,7 +6,7 @@ use crate::generate::{
 use crate::AppState;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use testharbor_domain::{
     can_apply, ApplyContext, DeliveryStatus, HumanResultDecision, ResultVerdict, RunId,
     RunPointers, WorkflowState,
@@ -773,11 +773,19 @@ pub fn create_successor_run(state: &AppState, run_id: &str) -> Result<SuccessorR
     })?;
     let current_scope =
         testharbor_trust::profile_trust_scope_hash(&project.root_path, &grant.profile);
-    if current_scope != successor_snapshot.required_trust_scope_hash {
+    if current_scope != successor_snapshot.required_trust_scope_hash
+        && !crate::is_deferred_runner_hash(&successor_snapshot.required_trust_scope_hash)
+    {
         return Err(ResultReviewError::Other(
             "predecessor TrustGrant no longer matches its frozen RunSnapshot".into(),
         ));
     }
+    let successor_profile_json = serde_json::to_vec(&grant.profile)?;
+    successor_snapshot.test_profile_hash = testharbor_domain::sha256_hex(&successor_profile_json);
+    successor_snapshot.all_command_snapshots_hash = grant.profile.all_command_snapshots_hash();
+    successor_snapshot.env_policy_hash =
+        testharbor_domain::sha256_hex(&serde_json::to_vec(&grant.profile.env_policy)?);
+    successor_snapshot.required_trust_scope_hash = current_scope.clone();
     successor_snapshot.base_commit = new_head.clone();
     successor_snapshot.project_config_hash =
         git::read_utf8_blob_at(&repo, &new_head, ".testharbor.yaml")
@@ -840,6 +848,10 @@ pub fn create_successor_run(state: &AppState, run_id: &str) -> Result<SuccessorR
     // collect/compile/inventory/reviewer pipeline as generation.
     let worktrees_root = state.paths().worktrees_dir.clone();
     let handle = ws::create_run_worktree(&repo, &worktrees_root, &sid, &new_head)?;
+    crate::workspace::sync_runtime_context(Path::new(&repo), &handle.worktree_path)
+        .map_err(|error| ws::WorkspaceError::Other(error.to_string()))?;
+    crate::workspace::sync_working_tree_overlay(&repo, &handle.worktree_path, &new_head)
+        .map_err(|error| ws::WorkspaceError::Other(error.to_string()))?;
     let generation = match ws::replay_candidate_paths(&handle, &source).and_then(|_| {
         let progress_dir = state.paths().root.join("runs").join(&sid).join("agent");
         std::fs::create_dir_all(&progress_dir)

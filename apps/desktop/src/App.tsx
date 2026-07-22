@@ -520,6 +520,13 @@ function operationErrorMessage(error: unknown) {
     lower.includes("start execution blocked") && lower.includes("candidate")
   ) {
     summary = tr("The approved isolated worktree changed, so TestHarbor blocked execution. Inspect the changed files; remove temporary files and retry, or regenerate/reapprove changed test source.");
+  } else if (
+    lower.includes("start execution blocked") &&
+    (lower.includes("wrongworkflowstate") ||
+      lower.includes("needs_human") ||
+      lower.includes("needshuman"))
+  ) {
+    summary = tr("This task requires human review. Resolve or accept the review findings, approve the case again, and then start formal execution.");
   } else if (lower.includes("changes outside writable scope")) {
     summary = tr("The generation service changed files outside the test scope, so TestHarbor blocked the candidate. Restrict output to test files or configure the required test paths/names.");
   } else if (
@@ -611,6 +618,24 @@ type TestEnvironmentInput = {
   password: string;
   variables: Record<string, string>;
 };
+
+const DEFAULT_TEST_OBJECTIVE = "编排接口 E2E 流程测试，验证完整业务链路";
+const DEFAULT_ACCEPTANCE_CRITERIA =
+  "通过 API/接口完成主要操作流程\n查询数据库或缓存验证关键状态变化\n测试数据隔离且按设置清理";
+
+function emptyTestEnvironment(): TestEnvironmentInput {
+  return {
+    context: "",
+    base_url: "",
+    health_url: "",
+    login_url: "",
+    startup_command: "",
+    startup_cwd: "",
+    username: "",
+    password: "",
+    variables: {},
+  };
+}
 
 function normDisp(d: string) {
   const x = d.toLowerCase();
@@ -2090,10 +2115,8 @@ function App() {
 
   // Run workflow messages
   const [log, setLog] = useState<string[]>([]);
-  const [objective, setObjective] = useState("编排接口 E2E 流程测试，验证完整业务链路");
-  const [criteriaText, setCriteriaText] = useState(
-    "通过 API/接口完成主要操作流程\n查询数据库或缓存验证关键状态变化\n测试数据隔离且按设置清理",
-  );
+  const [objective, setObjective] = useState(DEFAULT_TEST_OBJECTIVE);
+  const [criteriaText, setCriteriaText] = useState(DEFAULT_ACCEPTANCE_CRITERIA);
   const [sourceAnchorsText] = useState("");
   const [generationScopeText] = useState("");
   const [pastedSpecLabel] = useState("补充说明");
@@ -2101,17 +2124,8 @@ function App() {
   const [repoMarkdownText] = useState("");
   const [testStrategy, setTestStrategy] = useState("e2e_api_flow");
   const [cleanupTestData, setCleanupTestData] = useState(true);
-  const [testEnvironment, setTestEnvironment] = useState<TestEnvironmentInput>({
-    context: "",
-    base_url: "",
-    health_url: "",
-    login_url: "",
-    startup_command: "",
-    startup_cwd: "",
-    username: "",
-    password: "",
-    variables: {},
-  });
+  const [testEnvironment, setTestEnvironment] =
+    useState<TestEnvironmentInput>(emptyTestEnvironment);
   const [approvedCase, setApprovedCase] = useState(false);
   const [trusted, setTrusted] = useState(false);
   const [acceptInfo, setAcceptInfo] = useState<string | null>(null);
@@ -2618,6 +2632,7 @@ function App() {
           })
         : null;
       if (createdRun) {
+        resetNewRunForm();
         activeRunIdRef.current = createdRun.run_id;
         setRunId(createdRun.run_id);
         setCaseDetail(null);
@@ -2637,6 +2652,32 @@ function App() {
       setBusy(false);
       setActivity(null);
     }
+  }
+
+  function resetNewRunForm() {
+    setCaseDetail(null);
+    setObjective(DEFAULT_TEST_OBJECTIVE);
+    setCriteriaText(DEFAULT_ACCEPTANCE_CRITERIA);
+    setTestEnvironment(emptyTestEnvironment());
+    setTestStrategy("e2e_api_flow");
+    setCleanupTestData(true);
+    setAgentModel("");
+    setReuseAgentSession(false);
+    setApprovedCase(false);
+    setTrusted(false);
+    setAcceptInfo(null);
+    setAnalysisInfo(null);
+    setResultReviewInfo(null);
+    setExecution(null);
+    setExecutionComplete(false);
+    setCanAcceptPass(false);
+    setReadyToApply(false);
+    setGenerationProgress({ stdout_tail: "", stderr_tail: "" });
+    setGenerationRetryAvailable(false);
+    setRiskDrafts({});
+    setReviewDecisionOpen(false);
+    setEvents([]);
+    setLog([]);
   }
 
   async function pickAndOpen(createRun: boolean) {
@@ -4503,7 +4544,7 @@ function App() {
                         />
                       </label>
                       <p className="environment-help">
-                        {t("Free-form text never supplies startup commands or persisted secrets. Use masked runtime inputs declared by the Profile; only keys and fingerprints are stored.")}
+                        {t("Free-form text is saved with this task and sent to the CLI; avoid putting secrets in it. Username, password, and variables are only stored as fingerprints.")}
                       </p>
                     </details>
                     <div className="composer-options test-strategy-options">
@@ -5089,7 +5130,10 @@ function App() {
                                     <span>{t("Disposition")}</span>
                                     <ReviewDispositionSelect
                                       value={disposition}
-                                      disabled={busy || caseDetail.approved}
+                                      disabled={
+                                        busy ||
+                                        (caseDetail.approved && caseDetail.workflow_state !== "NeedsHuman")
+                                      }
                                       onChange={(value) => onSetDisposition(finding.id, value)}
                                     />
                                   </label>
@@ -5098,7 +5142,10 @@ function App() {
                                       value={
                                         riskDrafts[finding.id] ?? finding.risk_reason ?? ""
                                       }
-                                      disabled={busy || caseDetail.approved}
+                                      disabled={
+                                        busy ||
+                                        (caseDetail.approved && caseDetail.workflow_state !== "NeedsHuman")
+                                      }
                                       placeholder={t("Explain why this risk is accepted")}
                                       onChange={(event) =>
                                         setRiskDrafts((previous) => ({
@@ -5143,7 +5190,7 @@ function App() {
                           {t("Generate the next revision")} <span>→</span>
                         </button>
                       </div>
-                    ) : caseDetail.approved || approvedCase ? (
+                    ) : caseDetail.approved && caseDetail.workflow_state === "ExecutionReady" ? (
                       <>
                         <button
                           type="button"
@@ -5154,6 +5201,11 @@ function App() {
                           {t("Start formal execution")} <span>→</span>
                         </button>
                       </>
+                    ) : caseDetail.approved && caseDetail.workflow_state === "NeedsHuman" ? (
+                      <div className="block-reasons human-review-required">
+                        <strong>{t("Human review required")}</strong>
+                        <p>{t("Resolve or accept the review findings, approve the case again, and then start formal execution.")}</p>
+                      </div>
                     ) : caseDetail.can_approve ? (
                       <button
                         type="button"

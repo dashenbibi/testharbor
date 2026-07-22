@@ -223,7 +223,6 @@ pub fn write_review_bundle(
     patch: &str,
     validation_summary: &str,
 ) -> std::io::Result<()> {
-    const AGENT_REVIEW_PATCH_LIMIT: usize = 24_000;
     std::fs::create_dir_all(bundle_dir)?;
     std::fs::write(
         bundle_dir.join("test-intent.json"),
@@ -235,16 +234,12 @@ pub fn write_review_bundle(
         .unwrap(),
     )?;
     std::fs::write(bundle_dir.join("diff.patch"), patch)?;
-    let agent_patch = patch
-        .chars()
-        .take(AGENT_REVIEW_PATCH_LIMIT)
-        .collect::<String>();
-    let agent_patch = if agent_patch.chars().count() < patch.chars().count() {
-        format!("{agent_patch}\n[agent-review patch truncated; use changed-files.json for scope]")
-    } else {
-        agent_patch
-    };
-    std::fs::write(bundle_dir.join("agent-review.patch"), agent_patch)?;
+    // The review agent must be able to inspect every changed test path. A
+    // character cap here can cut a large newly-added test file in half while
+    // changed-files.json still advertises the complete file, producing a
+    // misleading review. Keep the agent-facing patch complete; callers can
+    // still use diff.patch for export and the UI excerpt for display.
+    std::fs::write(bundle_dir.join("agent-review.patch"), patch)?;
     std::fs::write(
         bundle_dir.join("changed-files.json"),
         serde_json::to_vec_pretty(changed_paths).unwrap(),
@@ -259,7 +254,7 @@ pub fn write_review_bundle(
     let manifest = hex::encode(man.finalize());
     std::fs::write(
         bundle_dir.join("manifest.json"),
-        format!("{{\"hash\":\"{manifest}\"}}"),
+        format!("{{\"hash\":\"{manifest}\",\"agent_review_patch_complete\":true}}"),
     )?;
     Ok(())
 }
@@ -336,5 +331,32 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["high", "medium", "low"]
         );
+    }
+
+    #[test]
+    fn review_bundle_keeps_large_agent_patch_complete() {
+        let bundle = std::env::temp_dir().join(format!("testharbor-review-{}", Uuid::new_v4()));
+        let patch = "diff --git a/generated_e2e_test.php b/generated_e2e_test.php\n".to_string()
+            + &"+step\n".repeat(8_000);
+        write_review_bundle(
+            &bundle,
+            "cover the API flow",
+            &["the persisted state changes".into()],
+            "intent",
+            &["generated_e2e_test.php".into()],
+            &patch,
+            "{}",
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(bundle.join("agent-review.patch")).unwrap(),
+            patch
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(bundle.join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["agent_review_patch_complete"], true);
+        std::fs::remove_dir_all(bundle).unwrap();
     }
 }

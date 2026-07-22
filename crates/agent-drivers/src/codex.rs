@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -255,6 +256,15 @@ fn run_command_with_timeout_logged_cancelable_owned_in_dir_with_env(
         .and_then(|path| path.parent())
         .map(|dir| dir.join("generation.cancel"));
     let mut command = Command::new(program);
+    let is_agent_cli = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "codex" | "claude" | "grok"));
+    if is_agent_cli && environment.map_or(true, |values| !values.contains_key("PATH")) {
+        if let Some(path) = login_shell_path() {
+            command.env("PATH", path);
+        }
+    }
     if Path::new(program)
         .file_name()
         .and_then(|name| name.to_str())
@@ -471,6 +481,7 @@ fn run_codex_prompt(
     prompt: &str,
     model: Option<&str>,
 ) -> std::result::Result<Output, CodexError> {
+    let program = codex_command_path()?;
     let mut full_args = args.to_vec();
     if let Some(model) = model.filter(|model| !model.trim().is_empty()) {
         if full_args.get(1) == Some(&"resume") && !full_args.is_empty() {
@@ -482,7 +493,7 @@ fn run_codex_prompt(
     }
     full_args.push("-");
     run_command_with_timeout_logged_cancelable(
-        "codex",
+        program.to_str().unwrap_or("codex"),
         &full_args,
         Some(prompt),
         codex_total_timeout(),
@@ -501,6 +512,7 @@ fn run_codex_with_progress(
     model: Option<&str>,
     environment: Option<&HashMap<String, String>>,
 ) -> std::result::Result<Output, CodexError> {
+    let program = codex_command_path()?;
     let (stdout_log, stderr_log) = progress_dir
         .map(PathBuf::from)
         .map(|dir| {
@@ -527,7 +539,7 @@ fn run_codex_with_progress(
     }
     full_args.push("-".into());
     run_command_with_timeout_logged_cancelable_owned_in_dir_with_env(
-        "codex",
+        program.to_str().unwrap_or("codex"),
         &full_args,
         Some(prompt),
         codex_total_timeout(),
@@ -540,23 +552,90 @@ fn run_codex_with_progress(
     )
 }
 
-fn claude_command_path() -> std::result::Result<PathBuf, CodexError> {
-    if let Ok(path) = std::env::var("TESTHARBOR_CLAUDE_BIN") {
-        let path = PathBuf::from(path);
+fn resolve_cli_path(
+    name: &str,
+    override_env: &str,
+    display_name: &str,
+) -> std::result::Result<PathBuf, CodexError> {
+    if let Ok(path) = std::env::var(override_env) {
+        let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Ok(path);
         }
     }
     if let Some(path) = std::env::var_os("PATH").and_then(|value| {
         std::env::split_paths(&value)
-            .map(|dir| dir.join("claude"))
+            .map(|dir| dir.join(name))
             .find(|candidate| candidate.is_file())
     }) {
         return Ok(path);
     }
-    Err(CodexError::Unavailable(
-        "未找到 Claude Code CLI。请安装 claude，或设置 TESTHARBOR_CLAUDE_BIN".into(),
-    ))
+
+    // Packaged GUI apps often start without the user's terminal PATH. Ask
+    // the user's login shell to resolve the same command instead of requiring
+    // an absolute path in the settings UI.
+    #[cfg(unix)]
+    {
+        for shell in login_shells() {
+            if let Ok(output) = Command::new(shell)
+                .args(["-lc", "command -v \"$1\"", "testharbor-resolve", name])
+                .output()
+            {
+                if let Some(path) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .rev()
+                    .map(str::trim)
+                    .find(|line| Path::new(line).is_file())
+                {
+                    return Ok(PathBuf::from(path));
+                }
+            }
+        }
+    }
+
+    Err(CodexError::Unavailable(format!(
+        "未找到 {display_name}。请安装 {name}，或设置 {override_env}"
+    )))
+}
+
+fn codex_command_path() -> std::result::Result<PathBuf, CodexError> {
+    resolve_cli_path("codex", "TESTHARBOR_CODEX_BIN", "Codex CLI")
+}
+
+fn claude_command_path() -> std::result::Result<PathBuf, CodexError> {
+    resolve_cli_path("claude", "TESTHARBOR_CLAUDE_BIN", "Claude Code CLI")
+}
+
+#[cfg(unix)]
+fn login_shells() -> Vec<OsString> {
+    let mut shells = Vec::new();
+    if let Some(shell) = std::env::var_os("SHELL") {
+        shells.push(shell);
+    }
+    for shell in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
+        let shell = OsString::from(shell);
+        if !shells.iter().any(|candidate| candidate == &shell) {
+            shells.push(shell);
+        }
+    }
+    shells
+}
+
+#[cfg(unix)]
+fn login_shell_path() -> Option<OsString> {
+    login_shells().into_iter().find_map(|shell| {
+        let output = Command::new(shell)
+            .args(["-lc", "printf '%s' \"$PATH\""])
+            .output()
+            .ok()?;
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!path.is_empty()).then(|| OsString::from(path))
+    })
+}
+
+#[cfg(not(unix))]
+fn login_shell_path() -> Option<OsString> {
+    None
 }
 
 fn run_claude_with_progress(
@@ -968,7 +1047,8 @@ fn extract_thread_id(stdout: &[u8]) -> Option<String> {
 }
 
 pub fn probe_codex() -> std::result::Result<CodexCapabilities, CodexError> {
-    let output = Command::new("codex")
+    let program = codex_command_path()?;
+    let output = Command::new(&program)
         .args(["--version"])
         .output()
         .map_err(|e| CodexError::Unavailable(e.to_string()))?;
@@ -978,7 +1058,7 @@ pub fn probe_codex() -> std::result::Result<CodexCapabilities, CodexError> {
         ));
     }
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let help = Command::new("codex")
+    let help = Command::new(&program)
         .args(["exec", "--help"])
         .output()
         .map_err(|e| CodexError::Unavailable(e.to_string()))?;
@@ -988,7 +1068,7 @@ pub fn probe_codex() -> std::result::Result<CodexCapabilities, CodexError> {
         ));
     }
     let help_txt = String::from_utf8_lossy(&help.stdout);
-    let auth = Command::new("codex")
+    let auth = Command::new(&program)
         .args(["login", "status"])
         .output()
         .map_err(|e| CodexError::Unavailable(e.to_string()))?;
@@ -1053,8 +1133,9 @@ struct CodexModelCatalogResponse {
 }
 
 pub fn list_codex_models() -> std::result::Result<CliModelCatalog, CodexError> {
+    let program = codex_command_path()?;
     let output = run_command_with_timeout_logged_cancelable_owned(
-        "codex",
+        program.to_str().unwrap_or("codex"),
         &["debug".into(), "models".into()],
         None,
         DEFAULT_MODEL_CATALOG_TIMEOUT,
@@ -1503,7 +1584,7 @@ fn generate_with_provider(req: &GenerateRequest, provider: CliProvider) -> Resul
         prompt
     };
     let prompt = format!(
-        "{prompt}\nFINAL OUTPUT CONTRACT: after editing, return exactly one complete JSON envelope with schema_version=1, task_kind=generate_tests, test_intent_hash={}, scope_hash={}, evidence_refs={:?}, status=completed, a non-empty summary, and payload {{written_files:[repository-relative paths], proposed_intended_names:[exact stable test identities], notes:[], test_runner:{{executable:\"<repository-native executable>\",args:[\"<arg>\"],cwd:\".\",parser:\"exit-code\",timeout_ms:3600000}}}}. Set test_runner to the repository-native runner selected after inspecting the project, its language/tooling, configuration, README, and existing tests; do not assume any specific language or framework. Use null only when TestHarbor already supplied a compatible confirmed runner. Do not return shell pipelines or a single shell command string: executable and args must be separate. Bare payloads, Markdown fences, missing intended identities, or mismatched hashes/evidence refs are invalid.",
+        "{prompt}\nFINAL OUTPUT CONTRACT: after editing, return exactly one complete JSON envelope with schema_version=1, task_kind=generate_tests, test_intent_hash={}, scope_hash={}, evidence_refs={:?}, status=completed, a non-empty summary, and payload {{written_files:[repository-relative paths], proposed_intended_names:[exact stable test identities], notes:[], test_runner:{{executable:\"<repository-native executable>\",args:[\"<arg>\"],cwd:\".\",parser:\"exit-code\",timeout_ms:3600000}}}}. Inspect the project, its language/tooling, configuration, README, and existing tests to select the best executable runner; do not assume any specific language or framework. Missing login credentials, a running service, a dedicated E2E harness, a test database, or persistence fixtures must not stop test generation: record those limits in summary/notes and still generate the best candidate. If a likely test entrypoint exists, return the best-effort command even when it is only command-level exit-code based; use null only when no plausible test command or test entrypoint can be found at all, or when TestHarbor already supplied a compatible confirmed runner. Do not return shell pipelines or a single shell command string: executable and args must be separate. Bare payloads, Markdown fences, missing intended identities, or mismatched hashes/evidence refs are invalid.",
         req.test_intent_hash, req.scope_hash, req.evidence_refs
     );
 
@@ -1697,6 +1778,36 @@ pub fn grok_review(req: &ReviewRequest) -> Result<ReviewResult> {
     review_with_provider(req, CliProvider::Grok)
 }
 
+fn repair_review_patch_bundle(bundle: &Path) -> Result<()> {
+    let full_patch_path = bundle.join("diff.patch");
+    let agent_patch_path = bundle.join("agent-review.patch");
+    let Ok(full_patch) = std::fs::read(&full_patch_path) else {
+        return Ok(());
+    };
+    let needs_refresh = std::fs::read(&agent_patch_path)
+        .map(|agent_patch| agent_patch != full_patch)
+        .unwrap_or(true);
+    if needs_refresh {
+        std::fs::write(&agent_patch_path, &full_patch)?;
+    }
+
+    let manifest_path = bundle.join("manifest.json");
+    if let Ok(body) = std::fs::read_to_string(&manifest_path) {
+        if let Ok(mut manifest) = serde_json::from_str::<serde_json::Value>(&body) {
+            if let Some(object) = manifest.as_object_mut() {
+                object.insert(
+                    "agent_review_patch_complete".into(),
+                    serde_json::Value::Bool(true),
+                );
+                let bytes = serde_json::to_vec(&manifest)
+                    .map_err(|error| AgentError::OutputInvalid(error.to_string()))?;
+                std::fs::write(&manifest_path, bytes)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn review_with_provider(req: &ReviewRequest, provider: CliProvider) -> Result<ReviewResult> {
     match provider {
         CliProvider::Codex => {
@@ -1738,6 +1849,7 @@ fn review_with_provider(req: &ReviewRequest, provider: CliProvider) -> Result<Re
     }
 
     let bundle = Path::new(&req.bundle_dir);
+    repair_review_patch_bundle(bundle)?;
     let schema_path = bundle.join("review-schema.json");
     let last_msg = bundle.join("review-last.json");
     write_review_schema(&schema_path)?;
@@ -1748,10 +1860,10 @@ fn review_with_provider(req: &ReviewRequest, provider: CliProvider) -> Result<Re
         .map(|message| format!("\nHuman revision request to verify:\n{message}\n"))
         .unwrap_or_default();
     let prompt = format!(
-        "Review the generated tests using only files in this bundle directory. Read test-intent.json, changed-files.json, agent-review.patch, and validation-summary.json once, then make the decision; do not search the repository or inspect unrelated files. The objective, acceptance criteria, and test intent hash are in test-intent.json; do not repeat or reconstruct them from other files. agent-review.patch is a bounded review context; use changed-files.json to understand the complete file scope.\n\
+        "Review the generated tests using only files in this bundle directory. Read test-intent.json, changed-files.json, agent-review.patch, and validation-summary.json once, then make the decision; do not search the repository or inspect unrelated files. The objective, acceptance criteria, and test intent hash are in test-intent.json; do not repeat or reconstruct them from other files. agent-review.patch is the complete agent-facing patch for every path listed in changed-files.json; inspect the entire patch before deciding. This is a generation-time review: validation-summary.json contains static generation validation, not execution output. Do not require runtime HTTP evidence at this stage.\n\
          {}\
          Changed paths: {}\n\
-         For every protected API path, verify that the generated test reaches the real router and authentication middleware. A request with a fabricated Authorization header is not an authentication step. Require a concrete login/token/session/API-key acquisition step and a corresponding `TESTHARBOR_STEP` of type `auth`; flag missing authentication, inline route stubs, fixed-response handlers, direct controller calls, or mocked middleware as a major finding. For every `TESTHARBOR_HTTP_RESPONSE`, verify that the runtime evidence contains the actual response body as well as the status and headers. A response marker with only `status`, or with a missing `body` field, is a major finding; an endpoint without a body must emit an explicit null or empty body value.\n\
+         For every protected API path, verify that the generated test reaches the real router and authentication middleware. A request with a fabricated Authorization header is not an authentication step. Require a concrete login/token/session/API-key acquisition step and a corresponding `TESTHARBOR_STEP` of type `auth`; flag missing authentication, inline route stubs, fixed-response handlers, direct controller calls, or mocked middleware as a major finding. For every `TESTHARBOR_HTTP_RESPONSE`, inspect the generated source and verify that it reads the actual response status, headers, and decoded body before emitting the marker. A source marker that contains only `status`, omits `body`/`headers`, hardcodes a response, or never captures the real response is a major finding. Do not flag the absence of runtime response records in validation-summary.json here; execution-time evidence is checked after the test runs.\n\
          Respond with exactly one complete JSON envelope matching the schema. Set schema_version=1, task_kind=review_tests, status=completed, and echo test_intent_hash={}, scope_hash={}, evidence_refs={:?} exactly. The payload contains recommendation APPROVE|CHANGES|BLOCK|NEEDS_HUMAN and findings. Bare payloads are invalid. Do not use Markdown fences, prose, or multiple JSON objects. Use Simplified Chinese for the human-facing summary, finding messages, suggestions, and other explanatory text. Keep recommendation enum values, file paths, identifiers, and code symbols unchanged.",
         revision_feedback,
         req.changed_paths.join(", "),
@@ -2549,6 +2661,28 @@ fn _schema_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repairs_truncated_review_patch_from_full_diff() {
+        let bundle =
+            std::env::temp_dir().join(format!("testharbor-agent-review-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("diff.patch"), "full patch\nwith all lines\n").unwrap();
+        std::fs::write(bundle.join("agent-review.patch"), "truncated\n").unwrap();
+        std::fs::write(bundle.join("manifest.json"), r#"{"hash":"x"}"#).unwrap();
+
+        repair_review_patch_bundle(&bundle).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(bundle.join("agent-review.patch")).unwrap(),
+            "full patch\nwith all lines\n"
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(bundle.join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["agent_review_patch_complete"], true);
+        std::fs::remove_dir_all(bundle).unwrap();
+    }
 
     fn assert_strict_objects(value: &serde_json::Value) {
         match value {
