@@ -29,7 +29,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2",
     "@xyflow/react": "^12.11.2",
-    "react": "^19.1.0",
+    "react": "^19.2.8",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
