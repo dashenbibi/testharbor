@@ -1,0 +1,22 @@
+[package]
+name = "testharbor-result-normalizer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Normalize Go test JSON / generic results"
+
+[dependencies]
+testharbor-domain = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+roxmltree = "0.20"
+
+[dev-dependencies]
+tempfile = "3"

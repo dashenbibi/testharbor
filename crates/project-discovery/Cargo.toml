@@ -1,0 +1,18 @@
+[package]
+name = "testharbor-project-discovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "TestHarbor read-only project discovery"
+
+[dependencies]
+testharbor-domain = { workspace = true }
+testharbor-git-adapter = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

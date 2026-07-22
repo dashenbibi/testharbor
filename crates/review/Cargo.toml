@@ -1,0 +1,22 @@
+[package]
+name = "testharbor-review"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Review findings and human dispositions"
+
+[dependencies]
+testharbor-domain = { workspace = true }
+testharbor-agent-drivers = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

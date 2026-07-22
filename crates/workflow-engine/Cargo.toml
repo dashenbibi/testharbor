@@ -1,0 +1,13 @@
+[package]
+name = "testharbor-workflow-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "TestHarbor workflow transition engine"
+
+[dependencies]
+testharbor-domain = { workspace = true }

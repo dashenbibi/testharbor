@@ -1,0 +1,60 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/application",
+    "crates/storage",
+    "crates/path-policy",
+    "crates/git-adapter",
+    "crates/workspace-manager",
+    "crates/process-supervisor",
+    "crates/trust",
+    "crates/project-discovery",
+    "crates/workflow-engine",
+    "crates/agent-drivers",
+    "crates/test-drivers",
+    "crates/result-normalizer",
+    "crates/review",
+    "crates/evidence",
+    "apps/desktop/src-tauri",
+    "apps/cli",
+    "apps/process-launcher",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+authors = ["TestHarbor contributors"]
+publish = false
+repository = "https://github.com/dashenbibi/testharbor"
+homepage = "https://github.com/dashenbibi/testharbor"
+
+[workspace.dependencies]
+testharbor-domain = { path = "crates/domain" }
+testharbor-application = { path = "crates/application" }
+testharbor-storage = { path = "crates/storage" }
+testharbor-path-policy = { path = "crates/path-policy" }
+testharbor-git-adapter = { path = "crates/git-adapter" }
+testharbor-workspace-manager = { path = "crates/workspace-manager" }
+testharbor-process-supervisor = { path = "crates/process-supervisor" }
+testharbor-trust = { path = "crates/trust" }
+testharbor-project-discovery = { path = "crates/project-discovery" }
+testharbor-workflow-engine = { path = "crates/workflow-engine" }
+testharbor-agent-drivers = { path = "crates/agent-drivers" }
+testharbor-test-drivers = { path = "crates/test-drivers" }
+testharbor-result-normalizer = { path = "crates/result-normalizer" }
+testharbor-review = { path = "crates/review" }
+testharbor-evidence = { path = "crates/evidence" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+tracing = "0.1"

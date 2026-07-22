@@ -1,0 +1,36 @@
+[package]
+name = "testharbor-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "TestHarbor application use cases"
+
+[dependencies]
+testharbor-domain = { workspace = true }
+testharbor-storage = { workspace = true }
+testharbor-git-adapter = { workspace = true }
+testharbor-workspace-manager = { workspace = true }
+testharbor-process-supervisor = { workspace = true }
+testharbor-trust = { workspace = true }
+testharbor-test-drivers = { workspace = true }
+testharbor-result-normalizer = { workspace = true }
+testharbor-agent-drivers = { workspace = true }
+testharbor-review = { workspace = true }
+testharbor-project-discovery = { workspace = true }
+testharbor-workflow-engine = { workspace = true }
+testharbor-evidence = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+parking_lot = "0.12"
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

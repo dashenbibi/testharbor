@@ -1,0 +1,41 @@
+# Repository metadata and local development output
+.git/
+**/.git/
+target/
+**/target/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.cache/
+coverage/
+.DS_Store
+
+# Internal planning and local agent instructions
+/AGENTS.md
+/DOGFOOD.md
+/产品设计.md
+/MVP产品设计.md
+/MVP技术设计.md
+
+# Local state and generated evidence
+.env
+.env.*
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+artifacts/
+worktrees/
+
+# Generated desktop sidecars
+/apps/desktop/src-tauri/binaries/testharbor-process-launcher-*
+
+# Local image-generation explorations
+/design/brand/concepts/testharbor-v2-*.png
+/design/brand/testharbor-app-icon-32-preview.png
+/apps/desktop/src-tauri/icons/android/
+/apps/desktop/src-tauri/icons/ios/

@@ -1,0 +1,26 @@
+[package]
+name = "testharbor-desktop"
+version.workspace = true
+description = "TestHarbor desktop shell (Tauri 2)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "testharbor_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+testharbor-domain = { workspace = true }
+testharbor-application = { workspace = true }

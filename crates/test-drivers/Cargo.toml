@@ -1,0 +1,20 @@
+[package]
+name = "testharbor-test-drivers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "TestHarbor test CLI drivers"
+
+[dependencies]
+testharbor-domain = { workspace = true }
+testharbor-process-supervisor = { workspace = true }
+testharbor-trust = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

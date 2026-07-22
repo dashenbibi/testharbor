@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">TestHarbor app icon</title>
+  <desc id="desc">A verified execution path resolving inside an open harbor-shaped run boundary.</desc>
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="#151611" />
+  <path
+    d="M128 160V336L184 392H328L384 336V160"
+    fill="none"
+    stroke="#E4E3DA"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+    stroke-width="52"
+  />
+  <path
+    d="M376 128H336L280 184V272L232 320L192 280"
+    fill="none"
+    stroke="#A9C77C"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+    stroke-width="48"
+  />
+</svg>

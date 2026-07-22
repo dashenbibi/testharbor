@@ -1,0 +1,51 @@
+# Rust
+/target
+**/*.rs.bk
+# Keep workspace Cargo.lock for reproducible builds
+
+# Node / Tauri
+node_modules/
+dist/
+apps/desktop/src-tauri/target/
+apps/desktop/dist/
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Internal planning and local agent instructions
+/AGENTS.md
+/DOGFOOD.md
+/产品设计.md
+/MVP产品设计.md
+/MVP技术设计.md
+
+# Local data / env / evidence
+.env
+.env.*
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+/artifacts/
+/worktrees/
+/.cache/
+/coverage/
+
+# Generated desktop sidecars
+/apps/desktop/src-tauri/binaries/testharbor-process-launcher-*
+
+# Local image-generation explorations; publish the cleaned vector and preview only
+/design/brand/concepts/testharbor-v2-*.png
+/design/brand/testharbor-app-icon-32-preview.png
+/apps/desktop/src-tauri/icons/android/
+/apps/desktop/src-tauri/icons/ios/
+
+# OS
+.DS_Store
+Thumbs.db

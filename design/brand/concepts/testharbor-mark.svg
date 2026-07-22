@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">TestHarbor provisional logo mark</title>
+  <desc id="desc">A moss execution path resolving inside a charcoal harbor-shaped frame.</desc>
+  <path
+    d="M112 144V352L176 416H336L400 352V144"
+    fill="none"
+    stroke="#151611"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+    stroke-width="64"
+  />
+  <path
+    d="M392 112H344L280 176V280L232 328L184 280"
+    fill="none"
+    stroke="#A9C77C"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+    stroke-width="56"
+  />
+</svg>

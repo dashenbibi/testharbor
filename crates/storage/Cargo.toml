@@ -1,0 +1,26 @@
+[package]
+name = "testharbor-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "TestHarbor SQLite storage and event log"
+
+[dependencies]
+testharbor-domain = { workspace = true }
+testharbor-evidence = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }
+directories = "5"
+
+[dev-dependencies]
+tempfile = "3"

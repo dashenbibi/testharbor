@@ -1,0 +1,43 @@
+name: Bug report
+description: Report reproducible incorrect behavior without confidential data.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, proprietary source, provider transcripts, local databases, or unredacted logs. Report security issues privately through SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: 0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options: [Desktop, CLI, Both]
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use a public or synthetic repository when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, architecture, provider CLI, test driver, and relevant tool versions.
+    validations:
+      required: true
