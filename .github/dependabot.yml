@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Tauri 2's Linux-only GTK3 stack pins glib ^0.18; GHSA-wrw7-89jp-8q8g
+      # requires glib >=0.20. Reassess this exception before enabling Linux.
+      - dependency-name: glib
   - package-ecosystem: npm
     directory: "/apps/desktop"
     schedule:
