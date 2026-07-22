@@ -40,7 +40,7 @@ Complete every applicable item before changing the repository visibility or publ
 
 ## GitHub settings
 
-- [ ] Enable private vulnerability reporting, secret scanning, push protection, Dependabot, and branch protection.
+- [x] Enable private vulnerability reporting, secret scanning, push protection, Dependabot, and branch protection.
 - [ ] Require CI and signed-off commits before merging.
 - [ ] Set the security contact method referenced by `SECURITY.md` and `CODE_OF_CONDUCT.md`.
 - [ ] Review issue and pull-request templates using a non-maintainer account.
