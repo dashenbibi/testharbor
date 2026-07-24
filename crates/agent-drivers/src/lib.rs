@@ -31,11 +31,12 @@ pub enum AgentError {
 
 pub type Result<T> = std::result::Result<T, AgentError>;
 
-/// Runtime target metadata supplied to a generator. Secret values are never
-/// interpolated into prompts; only variable names are described to the Agent.
+/// Runtime target metadata supplied to a generator.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TestEnvironment {
-    /// Deprecated compatibility field. It is not included in Agent prompts.
+    /// Free-form environment instructions supplied by the user and included
+    /// in the generation prompt so the CLI can resolve project-specific
+    /// service, authentication, and configuration details.
     #[serde(default)]
     pub context: String,
     pub base_url: String,

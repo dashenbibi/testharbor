@@ -1465,20 +1465,28 @@ fn generate_with_provider(req: &GenerateRequest, provider: CliProvider) -> Resul
         .unwrap_or("e2e_api_flow")
         .to_lowercase();
     let cleanup = req.cleanup_test_data.unwrap_or(true);
-    let external_target = req
-        .environment
-        .as_ref()
-        .filter(|environment| !environment.base_url.trim().is_empty());
+    let external_target = req.environment.as_ref().filter(|environment| {
+        !environment.base_url.trim().is_empty() || !environment.context.trim().is_empty()
+    });
     let runtime_boundary = external_target
         .map(|environment| {
             let mut variable_names = environment.variables.keys().cloned().collect::<Vec<_>>();
             variable_names.sort();
+            let context_note = if environment.context.trim().is_empty() {
+                "No free-form environment instructions were supplied.".to_string()
+            } else {
+                format!(
+                    "USER-PROVIDED ENVIRONMENT INSTRUCTIONS:\n{}",
+                    environment.context.trim()
+                )
+            };
             format!(
-                "RUNTIME TARGET: TestHarbor controls service startup through the confirmed ServiceProfile. Do not discover, infer, or execute startup/shutdown commands. Do not inspect process lists, local secret files, or credential values. Generate tests against the declared service URL and login endpoint only. Explicit service URL: {}. Health check: {}. Login endpoint: {}. Runtime variable names available only to the child process: {}.",
+                "RUNTIME TARGET: resolve the running service from the explicit target, the user instructions, and the repository's own configuration. TestHarbor does not provide a universal TESTHARBOR_* runtime contract. Do not invent or require TESTHARBOR_BASE_URL, TESTHARBOR_DB_DSN, TESTHARBOR_DB_USER, TESTHARBOR_DB_PASSWORD, TESTHARBOR_EXPECTED_DB_NAME, TESTHARBOR_ADMIN_NAME, TESTHARBOR_ADMIN_PASSWORD, TESTHARBOR_USER_NAME, or TESTHARBOR_USER_PASSWORD. Read the repository's actual config files, .env files, README/startup scripts, and native config loader; use the real project keys and values. Only use an environment variable when the repository already defines it or SmartTest explicitly supplied that exact variable. Do not fail in a synthetic preflight merely because one of the names above is absent. Do not execute startup/shutdown commands unless the confirmed ServiceProfile authorizes it, and do not scan unrelated secret files. Explicit service URL (if supplied): {}. Health check: {}. Login endpoint: {}. Runtime variable names explicitly supplied to the child process: {}.\n{}",
                 environment.base_url,
                 environment.health_url.as_deref().unwrap_or("base URL"),
                 environment.login_url.as_deref().unwrap_or("discover from repository/API docs"),
                 if variable_names.is_empty() { "none".into() } else { variable_names.join(", ") },
+                context_note,
             )
         })
         .unwrap_or_else(|| "RUNTIME TARGET: no external service is declared. Do not discover or execute service startup/shutdown commands; use only repository-native test harnesses already invoked by the confirmed Profile.".into());
@@ -1504,7 +1512,9 @@ fn generate_with_provider(req: &GenerateRequest, provider: CliProvider) -> Resul
     } else {
         strategy_instructions
     };
-    let strategy_instructions = format!("{strategy_instructions}\n{runtime_boundary}");
+    let runtime_config_contract = "RUNTIME CONFIG CONTRACT: when the user supplies a service URL, account, password, tenant, or other environment detail in the free-form environment instructions, identify and use it as generation input without inventing a SmartTest-specific variable name. Database, Redis, queue, and other dependency settings must come from the repository's existing configuration or native test helpers. Never add a mandatory TESTHARBOR_* environment preflight for values that the repository config already provides. Keep credentials out of generated source and emitted evidence; use the repository's normal runtime configuration or an explicitly supplied variable at execution time.";
+    let strategy_instructions =
+        format!("{strategy_instructions}\n{runtime_config_contract}\n{runtime_boundary}");
     let revision_feedback = req
         .change_request
         .as_deref()
@@ -1546,11 +1556,11 @@ fn generate_with_provider(req: &GenerateRequest, provider: CliProvider) -> Resul
          {}\
          Write or update only files in the repository's existing test layout and the configured writable test paths. Detect the language, framework, test naming convention, and runner from repository files; do not assume Go, a particular directory, or a particular framework. Never modify product code, application modules, dependency manifests, lockfiles, generated source, or configuration files. If the test exposes a product defect, keep the product code unchanged and report/assert the defect in the test or review summary. Do not run commands that rewrite dependencies or source files outside the writable test paths.\n\
          Prefer table-driven tests matching repo style when useful.\n\
-         Runtime-only test data, generated reports, screenshots, request/response dumps, and temporary files must go under `.testharbor/runs/{}` in this worktree. Never place runtime artifacts in the repository root or beside product source files; TestHarbor keeps `.testharbor/` in the worktree-local Git exclude list.\n\
+         Runtime-only test data, generated reports, screenshots, request/response dumps, and temporary files must go under `.testharbor/runs/{}` in this worktree. Never place runtime artifacts in the repository root or beside product source files; TestHarbor keeps `.testharbor/` in the worktree-local Git exclude list. Test SOURCE files must NEVER be placed under `.testharbor/`: that directory is git-ignored, so a test written there is invisible to candidate detection and the run fails with no candidate changes. Write test source files into the repository's existing test layout (for example `tests/`, `test/`, or beside existing tests) using the repository's test naming convention, so they appear in the candidate diff.\n\
          For every generated end-to-end/integration test, begin with bounded reconnaissance: inspect the changed-file list, project manifest, relevant route registrations, public interfaces, persistence models, runtime config selection, and existing test helpers; use targeted searches and read only files needed to establish evidence. Do not scan unrelated directories or reread the entire repository. Runtime config selection means checking the running process command line, startup scripts, README, `.env`, `config.yml`, `config.yaml`, `*-config.yml`, `*-config.yaml`, and `dev*.yml`; do not stop at empty `.tmp` templates. The flow must name real operations discovered in this repository and put them in execution order; do not collapse it into generic phases such as `准备测试上下文`, `调用接口`, or `断言结果`. Include every setup, create, update, configure, publish, query, state-verification, rollback, and business cleanup operation that is actually required by the target. Never invent domain entities, endpoint names, infrastructure components, or workflow steps that are not supported by repository evidence.\n\
          For protected APIs, trace the real route registration and authentication middleware before writing the test. Include a concrete authentication step before the first protected API: call the repository's real login/token/session endpoint or use its existing authenticated test helper, then carry the resulting token/cookie/session through subsequent requests. Emit this as a `TESTHARBOR_STEP` with `type` `auth` and verify the authentication result. If the flow supports unauthenticated or insufficient-permission behavior, include a separate 401/403 assertion case. A fake header such as `Authorization: Bearer test-token` is not login and must not be used as the only authentication evidence.\n\
          Do not define inline `r.GET`/`r.POST` handlers that merely return fixed responses, replace the production router with local route stubs, or call controller methods directly while claiming API E2E coverage. The test must exercise the real router/controller/middleware chain. If the repository has no local runnable router or auth harness, discover the running service from project configuration and use its real route and authentication path; if it cannot be started, report the exact command and error instead of fabricating an equivalent route.\n\
-         Expose that same human-readable flow in the generated source and at runtime. For each logical step, add a literal `TESTHARBOR_STEP` contract in the repository-native test source (a source comment or the framework's test-log API) so a reviewer can see it before execution, and emit the same contract before the action runs. Do not construct the step JSON dynamically from runtime values. Use the repository's actual test language and logging conventions; the following JSON is a contract example, not source-language-specific code:\n\
+         Expose that same human-readable flow as static source contracts so a reviewer can see every step before execution. For each logical step, write a literal `TESTHARBOR_STEP` contract as a static source comment in the test file: the exact text `TESTHARBOR_STEP` followed by one compact JSON object must appear in the generated source itself, placed next to the step it describes. A runtime print/echo/log statement that constructs the marker at runtime does NOT satisfy this requirement, because the contract is invisible in the source before the test runs and the review view cannot parse it; you may additionally emit the same contract at runtime for execution-time evidence, but the static source comment is required. Do not construct the step JSON dynamically from runtime values; write the full contract text statically. The following JSON is a contract example, not source-language-specific code:\n\
          TESTHARBOR_STEP {{\"id\":\"00-setup\",\"type\":\"setup\",\"title\":\"准备隔离测试数据\",\"input\":\"目标业务要求的实体和参数\",\"action\":\"使用仓库现有测试工具创建隔离数据\",\"output\":\"后续步骤所需的实体标识或上下文\",\"assertion\":\"数据已创建且不会污染其他测试\"}}\n\
          The `type` field is required and must identify the real execution mechanism: `setup`, `auth`, `api`, `mysql`, `redis`, `database`, `cache`, `queue`, `filesystem`, `assert`, `cleanup`, or `business`. Use `auth` for login/token/session/API-key acquisition, `api` for HTTP/REST/RPC calls, `mysql` for MySQL/SQL persistence operations, and `redis` for Redis/cache operations.\n\
          Emit one TESTHARBOR_STEP for setup, every concrete API/business operation, every database/cache/state verification, rollback or deletion, and final test-data cleanup when applicable. Cleanup must execute after all business verification steps; if it is registered near setup with a deferred cleanup hook, its emitted runtime step must still be the final step. The title must describe the real business action, and input/output/assertion must be understandable to a non-code reviewer. Use stable ordered ids such as `00-setup`, `01-main-operation`, and `99-cleanup` so the UI can track execution order.\n\
@@ -1566,7 +1576,7 @@ fn generate_with_provider(req: &GenerateRequest, provider: CliProvider) -> Resul
          TESTHARBOR_HTTP_RESPONSE {{\"case_id\":\"main-happy-path\",\"step_id\":\"01-main-operation\",\"status\":200,\"headers\":{{\"Content-Type\":\"application/json\"}},\"body\":{{\"<actual-field>\":\"<actual-value>\"}}}}\n\
          Both HTTP records must include the same case_id and step_id as the corresponding TESTHARBOR_CASE and TESTHARBOR_STEP.\n\
          Use the actual final method, URL, query/body, response status, response headers, and response body observed by the test. A `TESTHARBOR_HTTP_RESPONSE` containing only `status` is invalid: every response record must include a `body` field with the actual decoded response object, array, string, or an explicit `null`/empty value when the endpoint has no body. Read and decode the real response before emitting the marker; do not replace it with a status-only placeholder or invent a response. The evidence may be constructed dynamically because it must contain runtime values, but never fabricate values. Redact authorization headers, cookies, tokens, passwords, API keys, and other secrets. If a step is not HTTP/API based, do not invent HTTP evidence; its TESTHARBOR_STEP input/output and database/cache evidence are sufficient.\n\
-         Before finishing, inspect the generated test files and verify that every concrete business step has a literal TESTHARBOR_STEP contract, then ensure new tests compile with the project toolchain.",
+         Before finishing, inspect the generated test files and verify that every concrete business step has a literal TESTHARBOR_STEP contract present as a static source comment in the file (a runtime-only echo/print/log does not count), then ensure new tests compile with the project toolchain.",
         req.objective,
         req.language_hint,
         req.acceptance_criteria.join("\n- "),

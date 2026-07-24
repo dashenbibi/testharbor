@@ -1473,12 +1473,14 @@ function CaseFlowDetailsModal({
   steps,
   stepIndex,
   status,
+  execution,
   onClose,
   onStepChange,
 }: {
   steps: CaseFlowStep[];
   stepIndex: number;
   status: CaseFlowStatus;
+  execution: ExecutionPollDto | null;
   onClose: () => void;
   onStepChange: (index: number) => void;
 }) {
@@ -1566,6 +1568,14 @@ function CaseFlowDetailsModal({
               )}
             </div>
           )}
+          {!step.request && !step.response && execution &&
+            (step.kind === "api" || step.kind === "auth" ||
+              containsAny(`${step.action} ${step.input}`, ["http", "get ", "post ", "put ", "delete ", "接口", "请求"])) && (
+              <div className="case-flow-node-http case-flow-node-http-missing">
+                <span>{tr("Actual API evidence")}</span>
+                <p>{tr("No actual request or response was captured for this step. The step may not have executed, or the test stopped before this request.")}</p>
+              </div>
+            )}
         </div>
         <footer className="case-flow-details-footer">
           <button
@@ -1834,6 +1844,7 @@ function TestCaseFlow({
             executionComplete,
             executionFailed,
           })}
+          execution={execution}
           onClose={() => setSelectedStepKey(null)}
           onStepChange={(index) => setSelectedStepKey(steps[index]?.key ?? null)}
         />
@@ -2079,6 +2090,71 @@ function formatCodexConsole(raw: string) {
   flushClaudeStream();
   flushStream();
   return rendered.slice(-160).join("\n");
+}
+
+function TaskInputsPanel({ detail }: { detail: CaseReviewDetail }) {
+  const env = detail.environment;
+  const envRows: Array<{ label: string; value: string }> = [];
+  if (env) {
+    if (env.context.trim()) envRows.push({ label: tr("Environment instructions"), value: env.context.trim() });
+    if (env.base_url.trim()) envRows.push({ label: tr("Service URL"), value: env.base_url.trim() });
+    if (env.health_url?.trim()) envRows.push({ label: tr("Health check"), value: env.health_url.trim() });
+    if (env.login_url?.trim()) envRows.push({ label: tr("Login endpoint"), value: env.login_url.trim() });
+    if (env.startup_command?.trim()) {
+      envRows.push({
+        label: tr("Startup command"),
+        value: env.startup_cwd?.trim() ? `${env.startup_command.trim()} (cwd: ${env.startup_cwd.trim()})` : env.startup_command.trim(),
+      });
+    }
+    envRows.push({
+      label: tr("Credentials provided (re-enter to reuse)"),
+      value: env.credentials_provided ? tr("Credentials provided (re-enter to reuse)") : tr("None"),
+    });
+    if (env.variable_names.length > 0) {
+      envRows.push({ label: tr("Variables"), value: env.variable_names.join(", ") });
+    }
+  }
+  const agentLabel = [detail.agent_mode, detail.agent_model]
+    .filter((value) => value && value.trim())
+    .join(" · ");
+  return (
+    <details open className="task-inputs-panel" aria-label={tr("Task inputs")}>
+      <summary>
+        <span>{tr("Task inputs")}</span>
+      </summary>
+      <dl className="definition-list compact">
+        <div>
+          <dt>{tr("Objective")}</dt>
+          <dd className="task-inputs-pre">{detail.objective}</dd>
+        </div>
+        {detail.acceptance_criteria.length > 0 && (
+          <div>
+            <dt>{tr("Acceptance criteria")}</dt>
+            <dd className="task-inputs-pre">{detail.acceptance_criteria.join("\n")}</dd>
+          </div>
+        )}
+        {envRows.length > 0 ? (
+          envRows.map((row) => (
+            <div key={row.label}>
+              <dt>{row.label}</dt>
+              <dd className={row.value.length > 60 ? "task-inputs-pre" : undefined}>{row.value}</dd>
+            </div>
+          ))
+        ) : (
+          <div>
+            <dt>{tr("Environment instructions")}</dt>
+            <dd className="task-inputs-muted">{tr("No environment info")}</dd>
+          </div>
+        )}
+        {agentLabel && (
+          <div>
+            <dt>{tr("Generation service")}</dt>
+            <dd><code>{agentLabel}</code></dd>
+          </div>
+        )}
+      </dl>
+    </details>
+  );
 }
 
 function App() {
@@ -2805,6 +2881,57 @@ function App() {
     await refreshEvents(item.run_id);
   }
 
+  async function onCopyRunInputs(sourceRunId: string) {
+    if (busy) return;
+    const sourceItem = sidebarHistory.find((h) => h.run_id === sourceRunId);
+    if (!sourceItem) return;
+    let objective = sourceItem.objective;
+    let criteria = sourceItem.acceptance_criteria;
+    let env: CaseReviewDetail["environment"] = null;
+    let agentMode = sourceItem.agent_mode;
+    let agentModel = sourceItem.agent_model;
+    let reuse = false;
+    let hadSecrets = false;
+    try {
+      const d = await invoke<CaseReviewDetail>("case_review_detail", { runId: sourceRunId });
+      objective = d.objective;
+      criteria = d.acceptance_criteria;
+      env = d.environment;
+      agentMode = d.agent_mode;
+      agentModel = d.agent_model;
+      reuse = d.reuse_agent_session;
+      hadSecrets =
+        !!d.environment?.credentials_provided ||
+        (d.environment?.variable_names.length ?? 0) > 0;
+    } catch {
+      // Source run was never generated: fall back to history fields (no environment).
+    }
+    await openProjectPath(sourceItem.project_root, true);
+    if (objective && objective !== "(无目标)") setObjective(objective);
+    if (criteria.length > 0) setCriteriaText(criteria.join("\n"));
+    if (env) {
+      setTestEnvironment({
+        ...emptyTestEnvironment(),
+        context: env.context ?? "",
+        base_url: env.base_url ?? "",
+        health_url: env.health_url ?? "",
+        login_url: env.login_url ?? "",
+        startup_command: env.startup_command ?? "",
+        startup_cwd: env.startup_cwd ?? "",
+      });
+    }
+    if (agentMode === "grok" || agentMode === "claude" || agentMode === "codex") {
+      setAgentMode(agentMode);
+    }
+    setAgentModel(agentModel ?? "");
+    setReuseAgentSession(reuse);
+    pushLog(
+      hadSecrets
+        ? t("Copied task inputs; re-enter environment credentials/variables")
+        : t("Copied task inputs to a new task"),
+    );
+  }
+
   async function deleteHistoryRun(item: RunHistoryItem) {
     if (busy) return;
     const title =
@@ -2994,7 +3121,7 @@ function App() {
         testStrategy,
         cleanupTestData,
         agentMode,
-        agentModel: agentMode !== "codex" && agentModel ? agentModel : null,
+        agentModel: agentModel || null,
         reuseAgentSession,
         environment,
       });
@@ -3376,6 +3503,7 @@ function App() {
   async function onTrustAndRun(targetRunId?: string, caseId?: string) {
     const operationRunId = targetRunId ?? runId;
     if (!operationRunId) return;
+    let liveOutputPoller: number | null = null;
     if (isActiveRun(operationRunId)) {
       setError(null);
       setExecution(null);
@@ -3416,6 +3544,41 @@ function App() {
         title: "Executing tests",
         detail: "Live output appears below; long tasks use the configured test timeout",
       });
+      liveOutputPoller = window.setInterval(() => {
+        void (async () => {
+          if (cancelRequestedRuns.current.has(operationRunId) || !isActiveRun(operationRunId)) {
+            return;
+          }
+          try {
+            const live = await invoke<ExecutionPollDto>("poll_execution_output", {
+              runId: operationRunId,
+            });
+            if (!isActiveRun(operationRunId)) return;
+            setExecution((previous) =>
+              previous
+                ? {
+                    ...previous,
+                    outcome: live.outcome,
+                    stdout_tail: live.stdout_tail,
+                    stderr_tail: live.stderr_tail,
+                  }
+                : live,
+            );
+            const finished = ["exited", "timed_out", "cancelled", "failed"].includes(
+              live.outcome.phase,
+            );
+            setRunActivity(operationRunId, {
+              kind: "execute",
+              title: finished ? "Waiting for test-result analysis" : "Executing tests",
+              detail: finished
+                ? "The test process has exited; parsing structured results and running independent AI result review"
+                : "Live output appears below; long tasks use the configured test timeout",
+            });
+          } catch {
+            // The final poll may clear the active execution before this tick.
+          }
+        })();
+      }, 500);
       while (!cancelRequestedRuns.current.has(operationRunId)) {
         let slowPollNotice: number | null = null;
         if (isActiveRun(operationRunId)) {
@@ -3473,6 +3636,7 @@ function App() {
         }
       }
     } finally {
+      if (liveOutputPoller != null) window.clearInterval(liveOutputPoller);
       await refreshSidebarHistory();
       cancelRequestedRuns.current.delete(operationRunId);
       clearRunActivity(operationRunId);
@@ -3898,6 +4062,9 @@ function App() {
             (historyItem) => historyItem.run_id === item.run_id,
           );
           if (selected) void deleteHistoryRun(selected);
+        }}
+        onCopyRunInputs={(item) => {
+          void onCopyRunInputs(item.run_id);
         }}
         onAddProject={() => {
           setPathInput("");
@@ -4345,6 +4512,8 @@ function App() {
                   )}
                 </div>
               )}
+
+              {caseDetail && <TaskInputsPanel detail={caseDetail} />}
 
               {showGenerationWorkspace ? (
                 <div className="two-column-workspace">

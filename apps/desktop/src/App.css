@@ -569,6 +569,33 @@ code {
   height: 13px;
 }
 
+.sidebar-run-copy-action {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #686c61;
+  opacity: 0;
+}
+
+.sidebar-run-row:hover .sidebar-run-copy-action,
+.sidebar-run-row:focus-within .sidebar-run-copy-action {
+  opacity: 1;
+}
+
+.sidebar-run-copy-action:hover:not(:disabled) {
+  background: rgba(120, 150, 110, 0.14);
+  color: var(--moss-bright, #8fae84);
+}
+
+.sidebar-run-copy-action svg {
+  width: 13px;
+  height: 13px;
+}
+
 .run-status-dot {
   width: 6px;
   height: 6px;
@@ -1264,6 +1291,19 @@ code {
   font-family: var(--mono);
   font-size: 0.54rem;
   letter-spacing: 0.08em;
+}
+
+.case-flow-node-http-missing {
+  padding: 9px 10px;
+  border: 1px solid rgba(149, 116, 62, 0.56);
+  background: rgba(75, 58, 28, 0.14);
+}
+
+.case-flow-node-http-missing p {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 0.66rem;
+  line-height: 1.5;
 }
 
 .case-flow-node-http-block {
@@ -3813,7 +3853,8 @@ code {
 }
 
 .evidence-terminal summary,
-.audit-drawer summary {
+.audit-drawer summary,
+.task-inputs-panel summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3825,13 +3866,35 @@ code {
 }
 
 .evidence-terminal summary::-webkit-details-marker,
-.audit-drawer summary::-webkit-details-marker {
+.audit-drawer summary::-webkit-details-marker,
+.task-inputs-panel summary::-webkit-details-marker {
   display: none;
 }
 
 .evidence-terminal[open] summary,
-.audit-drawer[open] summary {
+.audit-drawer[open] summary,
+.task-inputs-panel[open] summary {
   border-bottom: 1px solid var(--line);
+}
+
+.task-inputs-panel {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  background: #141510;
+}
+
+.task-inputs-panel .definition-list {
+  margin: 0;
+  padding: 4px 13px 10px;
+}
+
+.task-inputs-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.task-inputs-muted {
+  color: var(--quiet);
 }
 
 .evidence-terminal .terminal-grid {
