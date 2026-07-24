@@ -27,6 +27,7 @@ type WorkspaceSidebarProps = {
   onSelectRun: (run: SidebarRun) => void;
   onCreateRun: (project: SidebarProject | null) => void;
   onDeleteRun: (run: SidebarRun) => void;
+  onCopyRunInputs: (run: SidebarRun) => void;
   onAddProject: () => void;
   onOpenSettings: () => void;
   serviceReady: boolean;
@@ -73,6 +74,15 @@ function TrashIcon() {
       <path d="M8.2 6.2V4.4h3.6v1.8" />
       <path d="M6.1 6.2 6.8 16h6.4l.7-9.8" />
       <path d="M8.8 8.7v4.8M11.2 8.7v4.8" />
+    </svg>
+  );
+}
+
+function CopyInputsIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x="6.5" y="6.5" width="8" height="8" rx="1.4" />
+      <path d="M13.5 6.5V5.2A1.2 1.2 0 0 0 12.3 4H6.2A1.2 1.2 0 0 0 5 5.2v6.1A1.2 1.2 0 0 0 6.2 12.6h1.3" />
     </svg>
   );
 }
@@ -162,6 +172,7 @@ export function WorkspaceSidebar({
   onSelectRun,
   onCreateRun,
   onDeleteRun,
+  onCopyRunInputs,
   onAddProject,
   onOpenSettings,
   serviceReady,
@@ -360,6 +371,19 @@ export function WorkspaceSidebar({
                               <small>{workflowLabel(run.workflow_state, language, run.legacy_read_only)}</small>
                             </span>
                             <time>{relativeTime(run.updated_at, language)}</time>
+                          </button>
+                          <button
+                            type="button"
+                            className="sidebar-run-copy-action"
+                            disabled={busy}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onCopyRunInputs(run);
+                            }}
+                            title={t("Copy inputs to new task")}
+                            aria-label={t("Copy inputs to new task")}
+                          >
+                            <CopyInputsIcon />
                           </button>
                           <button
                             type="button"

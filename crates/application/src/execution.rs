@@ -1326,6 +1326,8 @@ pub fn poll_execution(state: &AppState, run_id: &str) -> Result<ExecutionPollRes
         16_384,
         32_000,
     );
+    let mut display_stdout = stdout_tail.clone();
+    let mut display_stderr = stderr_tail.clone();
 
     let finished = matches!(
         outcome.phase,
@@ -1384,6 +1386,8 @@ pub fn poll_execution(state: &AppState, run_id: &str) -> Result<ExecutionPollRes
             64 * 1024,
             1024 * 1024,
         );
+        display_stdout = full_stdout.clone();
+        display_stderr = full_stderr.clone();
         sanitize_finalized_log(&outcome.stdout_path, &full_stdout);
         sanitize_finalized_log(&outcome.stderr_path, &full_stderr);
 
@@ -1421,8 +1425,8 @@ pub fn poll_execution(state: &AppState, run_id: &str) -> Result<ExecutionPollRes
                 execution_id: active.execution_id,
                 task_id: active.task_id,
                 outcome,
-                stdout_tail,
-                stderr_tail,
+                stdout_tail: display_stdout,
+                stderr_tail: display_stderr,
                 generic_result: Some(diagnostic_generic),
                 structured: diagnostic_structured,
                 intended_observation: None,
@@ -1616,8 +1620,8 @@ pub fn poll_execution(state: &AppState, run_id: &str) -> Result<ExecutionPollRes
         execution_id: active.execution_id,
         task_id: active.task_id,
         outcome,
-        stdout_tail,
-        stderr_tail,
+        stdout_tail: display_stdout,
+        stderr_tail: display_stderr,
         generic_result,
         structured,
         intended_observation,
@@ -1625,6 +1629,48 @@ pub fn poll_execution(state: &AppState, run_id: &str) -> Result<ExecutionPollRes
         analysis,
         result_review,
         agent_error,
+    })
+}
+
+/// Read the active process output without parsing or running result agents.
+///
+/// Formal execution keeps the active record until structured parsing and the
+/// independent result review have finished.  The UI still needs a responsive
+/// stream during that period, so this endpoint deliberately has no workflow
+/// side effects and only returns the latest process snapshot and redacted logs.
+pub fn poll_execution_output(state: &AppState, run_id: &str) -> Result<ExecutionPollResult> {
+    let run_id = parse_run_id(run_id)?;
+    let active = state
+        .get_active_execution(&run_id.to_string())
+        .ok_or(ExecutionError::NoActiveExecution)?;
+    let outcome = state.supervisor().poll(&active.task_id)?;
+    let secrets = runtime_secret_values(state, &run_id.to_string());
+    let stdout_tail = testharbor_evidence::redact_and_bound_log(
+        &read_log_tail(&outcome.stdout_path, 128_000).unwrap_or_default(),
+        &secrets,
+        16_384,
+        64_000,
+    );
+    let stderr_tail = testharbor_evidence::redact_and_bound_log(
+        &read_log_tail(&outcome.stderr_path, 64_000).unwrap_or_default(),
+        &secrets,
+        16_384,
+        32_000,
+    );
+
+    Ok(ExecutionPollResult {
+        execution_id: active.execution_id,
+        task_id: active.task_id,
+        outcome,
+        stdout_tail,
+        stderr_tail,
+        generic_result: None,
+        structured: None,
+        intended_observation: None,
+        accept_pass: None,
+        analysis: None,
+        result_review: None,
+        agent_error: None,
     })
 }
 
@@ -2248,8 +2294,9 @@ pub fn get_last_execution_result(state: &AppState, run_id: &str) -> Result<Execu
         execution_id: record.execution_id,
         task_id: "persisted".into(),
         outcome: record.outcome.clone(),
-        stdout_tail: read_log_tail(&record.outcome.stdout_path, 64_000).unwrap_or_default(),
-        stderr_tail: read_log_tail(&record.outcome.stderr_path, 32_000).unwrap_or_default(),
+        stdout_tail: read_log_tail(&record.outcome.stdout_path, 2 * 1024 * 1024)
+            .unwrap_or_default(),
+        stderr_tail: read_log_tail(&record.outcome.stderr_path, 1024 * 1024).unwrap_or_default(),
         generic_result: Some(record.generic_result),
         structured: record.structured,
         intended_observation: record.intended_observation,

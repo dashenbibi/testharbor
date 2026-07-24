@@ -13,20 +13,20 @@ use testharbor_application::{
     get_generation_progress, get_last_execution_result, get_run_actions, get_run_audit_history,
     get_run_detail, get_worktree_status, list_claude_models, list_codex_models, list_grok_models,
     list_recent_projects, list_run_events, list_run_history, open_project, poll_execution,
-    prepare_execution_rerun, prepare_worktree, probe_path, probe_profile_readiness,
-    recover_on_startup, reevaluate_accept_pass, reject_test_case, request_case_changes,
-    request_result_test_change, retry_generation_with_options, set_finding_disposition,
-    set_intended_tests, start_test_execution, stop_current_activity, suggest_profile,
-    write_in_worktree, AcceptPassView, ActivityActionResult, AppInfo, AppInfoExt, AppState,
-    ApplyGuardView, ApplyPatchResult, ApproveCaseResult, CandidateRevision, CaseReviewDetail,
-    CaseReviewState, CleanupResult, CommentCaseResult, ConfirmedTrust, CreatedRunSummary,
-    DeleteRunResult, DiskUsage, ExecutionPollResult, ExportPatchResult, FindingDisposition,
-    GenerateTestsRequest, GenerateTestsResult, GenerationProgress, InventoryView,
-    OpenProjectResult, PrepareWorktreeResult, ProbeResult, ProfileProbeResult, ProfileSuggestion,
-    ProjectSummary, RecoveryReport, RejectCaseResult, ResultDecisionResult, RunEventItem,
-    RunFilter, RunHistoryItem, SharedAppState, SpecAttachmentInput, StartExecutionResult,
-    SuccessorRunResult, TestEnvironmentInput, TestIdentity, TestProfileDraft, UiPreferences,
-    WorktreeStatus,
+    poll_execution_output as read_execution_output, prepare_execution_rerun, prepare_worktree,
+    probe_path, probe_profile_readiness, recover_on_startup, reevaluate_accept_pass,
+    reject_test_case, request_case_changes, request_result_test_change,
+    retry_generation_with_options, set_finding_disposition, set_intended_tests,
+    start_test_execution, stop_current_activity, suggest_profile, write_in_worktree,
+    AcceptPassView, ActivityActionResult, AppInfo, AppInfoExt, AppState, ApplyGuardView,
+    ApplyPatchResult, ApproveCaseResult, CandidateRevision, CaseReviewDetail, CaseReviewState,
+    CleanupResult, CommentCaseResult, ConfirmedTrust, CreatedRunSummary, DeleteRunResult,
+    DiskUsage, ExecutionPollResult, ExportPatchResult, FindingDisposition, GenerateTestsRequest,
+    GenerateTestsResult, GenerationProgress, InventoryView, OpenProjectResult,
+    PrepareWorktreeResult, ProbeResult, ProfileProbeResult, ProfileSuggestion, ProjectSummary,
+    RecoveryReport, RejectCaseResult, ResultDecisionResult, RunEventItem, RunFilter,
+    RunHistoryItem, SharedAppState, SpecAttachmentInput, StartExecutionResult, SuccessorRunResult,
+    TestEnvironmentInput, TestIdentity, TestProfileDraft, UiPreferences, WorktreeStatus,
 };
 
 #[tauri::command]
@@ -226,6 +226,19 @@ async fn poll_run_execution(
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         poll_execution(&state, &run_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn poll_execution_output(
+    state: State<'_, SharedAppState>,
+    run_id: String,
+) -> Result<ExecutionPollResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        read_execution_output(&state, &run_id).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -658,6 +671,7 @@ pub fn run() {
             confirm_test_command,
             start_execution,
             poll_run_execution,
+            poll_execution_output,
             cancel_run_execution,
             collect_run_inventory,
             set_run_intended,

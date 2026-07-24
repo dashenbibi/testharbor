@@ -21,10 +21,11 @@ pub use actions::{end_run, get_run_actions, stop_current_activity, ActivityActio
 pub use app_state::{AppState, SharedAppState};
 pub use execution::{
     cancel_execution, collect_inventory, confirm_custom_command, confirm_profile,
-    get_last_execution_result, poll_execution, probe_profile_readiness, reevaluate_accept_pass,
-    set_execution_timeout, set_intended_tests, start_test_execution, suggest_profile,
-    AcceptPassView, ConfirmedTrust, ExecutionPollResult, InventoryView, LastExecutionRecord,
-    ProfileProbeResult, ProfileProbeStage, ProfileSuggestion, StartExecutionResult,
+    get_last_execution_result, poll_execution, poll_execution_output, probe_profile_readiness,
+    reevaluate_accept_pass, set_execution_timeout, set_intended_tests, start_test_execution,
+    suggest_profile, AcceptPassView, ConfirmedTrust, ExecutionPollResult, InventoryView,
+    LastExecutionRecord, ProfileProbeResult, ProfileProbeStage, ProfileSuggestion,
+    StartExecutionResult,
 };
 pub use generate::{
     approve_test_case, cancel_generation, comment_case_review, generate_and_review,
